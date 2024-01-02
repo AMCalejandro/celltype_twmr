@@ -1,6 +1,3 @@
-
-
-
 ## About the remote
 
 This is the remote in which we host all the workflows and utils needed to perform TWMR analyses that allows us to make causal inferences from GWAS and (sc)QTL-derived transcriptome wide data.  
@@ -35,7 +32,8 @@ bash dockerrun_twmrcontainer.sh
 ```
 
 
-### Run each workflow step
+
+## Run each workflow step
 
 
 Once docker is installed, you can run each workflow step following the R markdowns contained in the workflow directory.  
@@ -61,7 +59,7 @@ Below I provide a summary what each R markdown allows us to do.
 
 
 
-### Get matrices and run TWMR through an Rscript
+## Get matrices and run TWMR through an Rscript
 
 Based on our experience, the generation of gene matrices that we will finally use on inferences of causality based on TWMR is time consuming.  
 For that, we have generated an Rscript stored in utils called **prepare_twmrinput.R**.  
