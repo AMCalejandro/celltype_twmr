@@ -13,7 +13,7 @@ The TWMR publication can be found [here](https://www.nature.com/articles/s41467-
 
 Below, we show a diagram summarising the entire workflow developed to perform cell type enrichment TWMR analyses.  
 
-![workflow_img](https://github.com/AMCalejandro/celltype_twmr/blob/master/workflow/cte_twmr_diagram.jpg)
+![workflow_img](https://github.com/AMCalejandro/celltype_twmr/blob/master/img/cte_twmr_diagram.jpg)
 
 
 
