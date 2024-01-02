@@ -1,0 +1,88 @@
+---
+title: "run_twmr"
+author: "AMCalejandro"
+date: '2023-02-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, engine.opts = list(bash = "-l"))
+```
+
+
+
+> AIM: In this markdown, we generate the metabrain datasets filtered by the SNPs mapped from the input GWAS
+
+
+# Set up
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(purrr)
+```
+
+
+
+
+# Run TWMR in all genes and obtain the alpha file
+
+## For PD risk
+
+```{bash}
+# This is the command that worked from the command prompt
+# nohup bash -c "time ./run_twmr.sh" > results.log 2>&1 &
+nohup bash -c "time /home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/utils/run_twmr.sh" > results.log 2>&1 &
+```
+
+
+## For height
+```{bash}
+CHRFILES=~/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/genes_tmp/chr*
+
+for f in $CHRFILES
+do
+allgenes=$(ls $f/)
+
+for gene in $allgenes
+do
+echo -e "$gene \n"
+if test -f "$f/$gene/$gene.matrix"; then
+  ~/celltyping_wd/celltype_twmr/test_epqtl/R/MR.R --args $gene $f/$gene/$gene.matrix $f/$gene/$gene.ld
+else 
+  echo "$f/$gene/$gene.matrix does not exist."
+fi
+
+done
+done
+```
+
+
+# Now I load results, merge, and save them
+
+```{r}
+workdirpath = "~/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/genes_FINAL_V3/"
+# Get all files and remove empty ones
+files = purrr::map(list.files(workdirpath, full.names = T), function(chr) {
+  genefiles = list.files(chr, full.names = T)
+  res = list.files(genefiles, pattern = "*\\.alpha", full.names = T)
+  res
+}) %>% purrr::compact()
+
+alldata = map(files, read_delim)  %>%
+  dplyr::bind_rows() %>%
+  mutate(study = "HEIGHT_EQTLGEN")
+
+fwrite(alldata, "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/res/height_eqtlgen.res", 
+       col.names = T, row.names = F, sep = "\t", quote = F)
+```
+
+
+# Testing
+```{bash}
+f=~/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr//genes_tmp/chr1/
+gene=ENSG00000002726
+#echo $gene
+~/celltyping_wd/celltype_twmr/test_epqtl/utils/MR.R --args $gene $f/$gene/$gene.matrix $f/$gene/$gene.ld
+```
+

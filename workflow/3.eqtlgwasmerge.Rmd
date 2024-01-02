@@ -1,0 +1,490 @@
+---
+title: "merge"
+author: "AMCalejandro"
+date: '2023-01-04'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, engine.opts = list(bash = "-l"))
+```
+
+
+> AIM: In this markdown, we generate the metabrain datasets filtered by the SNPs mapped from the input GWAS
+
+# Set up
+
+```{r}
+setwd("~/celltyping_wd/celltype_twmr/test_epqtl/workflow")
+
+library(tidyverse)
+library(purrr)
+library(data.table)
+library(here)
+library(parallel)
+library(SNPlocs.Hsapiens.dbSNP155.GRCh37)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+
+source(here::here("../R", "gwasqc.R"))
+```
+
+
+
+# Load QCed GWAS and eQTL data
+```{r}
+gwasfiles = list.files(here::here("../", "data", "gwas", "gwas_qc"), pattern = "*QCed.txt", full.names = T)
+#gwasfiles = gwasfiles[2]
+gwasfiles = list.files(here::here("../", "data", "gwas", "gwas_qc", "tmp"), pattern = "*QCed.txt", full.names = T)
+gwasfiles = list.files(here::here("../", "data", "gwas", "gwas_qc", "tmp"), full.names = T)
+gwasfiles = gwasfiles[4]
+gwas_qc = map(gwasfiles, fread) %>%
+  setNames(., gsub("(.+?)(_QCed.*)", "\\1", basename(gwasfiles)))
+
+
+eqtlfiles = list.files(here::here("../", "data", "eqtlqc"), pattern = "^[^trans]", full.names = T)
+eqtlfiles = eqtlfiles[2]
+eqtldata = map(eqtlfiles, fread) %>%
+  setNames(., str_extract(basename(eqtlfiles), "[^_]+"))
+```
+
+
+
+# map significant instrument/exposures to GWAS data
+
+Note that the filtering of significant instrument/exposures is done on the previous chunk with get_sign paraamter from df_harmonise
+The goal here is to make sure we get those SNPs from eqtl data that are also present in the GWAS data
+
+```{r}
+# Use tempdir
+
+get_tempdir = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/"
+
+metabrain_gwas_sign =
+  map2(gwas_qc, names(gwas_qc),
+       ~inst_sign_overlap(gwas = .x,
+                          eqtl = eqtldata[[2]],
+                          gwasname = .y,
+                          eqtlname = "metabrain",
+                          writepath = 
+                            paste0(get_tempdir, 
+                                   "/metabrain_", 
+                                   .y, 
+                                   ".txt")))
+eqtl_gwas_sign = 
+  map2(gwas_qc, names(gwas_qc),
+       ~inst_sign_overlap(gwas = .x,
+                          eqtl = eqtldata[[1]],
+                          gwasname = .y,
+                          eqtlname = "eqtlgen",
+                          writepath = 
+                            paste0(get_tempdir,
+                                   "/eqtlgen_", 
+                                   .y, 
+                                   ".txt")))
+
+```
+
+```{r}
+print(get_tempdir)
+
+gwas = gwas_qc[[3]]
+eqtl = eqtldata[[1]]
+
+gwas = gwas %>%
+  rename_with(.fn = function(.x){paste0(.x,"_gwas")})
+eqtl = eqtl %>%
+  rename_with(.fn = function(.x){paste0(.x,"_eqtl")})
+
+#gwas = gwas %>%
+#  dplyr::mutate(
+#    zscore_gwas = b_gwas /se_gwas,
+#    Beta_gwas = (zscore_gwas / sqrt( 2*freq_gwas * (1 - freq_gwas) * (N_gwas + zscore_gwas^2)))
+#    )
+
+
+# Inner join significant data
+gwaseqtl_sign = gwas %>%
+    inner_join(eqtl, by = c('SNP_gwas'='SNP_eqtl'))
+
+mismatches = subset(gwaseqtl_sign, gwaseqtl_sign$A1_gwas != gwaseqtl_sign$A1_eqtl)
+
+gwaseqtl_sign = gwaseqtl_sign[!gwaseqtl_sign$SNP_gwas %in% mismatches$SNP_gwas, ]
+
+
+
+# Flip SNPs, freqs and betas
+mismatches = mismatches %>% 
+  dplyr::mutate(A1_tmp_gwas = A2_gwas,#ifelse(freq_gwas > 0.5, A2_gwas, A1_gwas),
+         A2_tmp_gwas = A1_gwas,#ifelse(freq_gwas > 0.5, A1_gwas, A2_gwas),
+         b_gwas = (-1)*b_gwas,#ifelse(freq_gwas > 0.5, (-1)*b_gwas, b_gwas),
+         freq_gwas = 1 - freq_gwas) %>% #ifelse(freq_gwas > 0.5, 1 - freq_gwas, freq_gwas),
+         #zscore_gwas = b_gwas /se_gwas,
+         #Beta_gwas = (zscore_gwas / sqrt( 2*freq_gwas * (1 - freq_gwas) * (N_gwas + zscore_gwas^2)))) %>% 
+  dplyr::mutate( A1_gwas = A1_tmp_gwas, A2_gwas = A2_tmp_gwas) %>%
+  dplyr::select(-c(A1_tmp_gwas, A2_tmp_gwas))
+
+mismatches_v2 = subset(mismatches, mismatches$A1_gwas != mismatches$A1_eqtl)
+mismatches_v3 = subset(mismatches, !mismatches$SNP_gwas %in% mismatches_v2$SNP_gwas)
+
+gwaseqtl_sign = rbind(gwaseqtl_sign, mismatches_v3)
+  
+
+gwaseqtl_sign = gwaseqtl_sign %>%
+  dplyr::select(SNP = SNP_gwas,
+                BETA_GWAS = b_gwas, A1_gwas, A2_gwas, 
+                CHR = CHR_eqtl, ENSEMBL = ENSEMBL_eqtl,
+                HGNC = HGNC_eqtl, BETA_EQTL = Beta_eqtl, A1_eqtl = A1_eqtl) %>%
+  dplyr::relocate(CHR, .after = SNP)
+
+
+get_tempdir = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/TESTS_REFPANELMATCH_FIXDIRECTIONS/"
+writepath = paste0(get_tempdir, "/eqtlgen_height_REFPANELMATCH_FIXDIRECTIONS.txt")
+fwrite(gwaseqtl_sign, writepath, quote = F, sep = "\t",
+       col.names = T, row.names = F)
+
+
+# 
+# 
+# # Flip SNPs, freqs and betas
+# gwas = gwas %>% 
+#   dplyr::mutate(A1_tmp = ifelse(freq > 0.5, A2, A1),
+#          A2_tmp = ifelse(freq > 0.5, A1, A2),
+#          b = ifelse(freq > 0.5, (-1)*b, b),
+#          freq = ifelse(freq > 0.5, 1 - freq, freq),
+#          zscore = b /se,
+#          Beta = (zscore / sqrt( 2*freq * (1 - freq) * (N + zscore^2)))) %>% 
+#   dplyr::mutate( A1 = A1_tmp, A2 = A2_tmp) %>%
+#   dplyr::select(-c(A1_tmp, A2_tmp))
+# 
+# length(which(gwas$freq > 0.5))
+
+
+# 
+# 
+# # Merge and get rid of those alleles that do not match
+# 
+# gwas = gwas %>%
+#   rename_with(.fn = function(.x){paste0(.x,"_gwas")})
+# eqtl = eqtl %>%
+#   rename_with(.fn = function(.x){paste0(.x,"_eqtl")})
+# 
+# 
+# # Inner join significant data
+# gwaseqtl_sign = gwas %>%
+#     inner_join(eqtl, by = c('SNP_gwas'='SNP_eqtl'))
+#   
+# mismatches = subset(gwaseqtl_sign, gwaseqtl_sign$A1_gwas != gwaseqtl_sign$A1_eqtl)
+# 
+# # Try to flip A1_gwas and match 
+# 
+# 
+# #TODO 
+# # I need to work on a method to flip these mismatches
+# 
+# 
+# gwaseqtl_sign = subset(gwaseqtl_sign, !(gwaseqtl_sign$SNP_gwas %in% mismatches$SNP_gwas  ))
+# 
+# 
+# gwaseqtl_sign = gwaseqtl_sign %>% 
+#   dplyr::select(SNP = SNP_gwas, 
+#                 BETA_GWAS = Beta_gwas, A1_GWAS = A1_gwas,
+#                 CHR = CHR_eqtl, ENSEMBL = ENSEMBL_eqtl, 
+#                 HGNC = HGNC_eqtl, BETA_EQTL = Beta_eqtl, A1_eqtl = A1_eqtl) %>% 
+#   dplyr::relocate(CHR, .after = SNP)
+# 
+# 
+# get_tempdir = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/TESTS_FIXDIRECTIONS/"
+# writepath = paste0(get_tempdir, "/eqtlgen_height_FIXDIRECTIONS.txt")
+# fwrite(gwaseqtl_sign, writepath, quote = F, sep = "\t",
+#        col.names = T, row.names = F)
+```
+
+
+
+# Check that the reference panel and the GWAS_EQTL have the same reference allele
+
+```{r}
+load_ref = fread("/home/rstudio/DATA/AMPPD/QC_DATA/AMPPD_w_rsids_rsidsOnly_Controls.bim") %>% 
+  setNames(c('CHR','SNP','CM', 'BP_COORD', 'A1','A2'))
+
+gwaseqtl_sign = gwaseqtl_sign %>%
+  rename_with(.fn = function(.x){paste0(.x,"_gwasqtl")})
+load_ref = load_ref %>%
+  rename_with(.fn = function(.x){paste0(.x,"_ref")})
+
+gwaseqtlref = gwaseqtl_sign %>% inner_join(load_ref, by = c('SNP_gwasqtl' = 'SNP_ref'))
+
+mismatches = subset(gwaseqtlref, gwaseqtlref$A1_gwas_gwasqtl != gwaseqtlref$A1_ref)
+
+
+gwaseqtlref = gwaseqtlref[!gwaseqtlref$SNP_gwasqtl %in% mismatches$SNP_gwasqtl, ]
+
+
+# Flip SNPs, freqs and betas
+mismatches = mismatches %>% 
+  dplyr::mutate(
+    A1_tmp_gwas = A2_gwas_gwasqtl,#ifelse(freq_gwas > 0.5, A2_gwas, A1_gwas),
+    A2_tmp_gwas = A1_gwas_gwasqtl,#ifelse(freq_gwas > 0.5, A1_gwas, A2_gwas),
+    BETA_GWAS_gwasqtl = (-1)*BETA_GWAS_gwasqtl,
+    BETA_EQTL_gwasqtl = (-1)*BETA_EQTL_gwasqtl) %>% 
+  dplyr::mutate( A1_gwas_gwasqtl = A1_tmp_gwas, A2_gwas_gwasqtl = A2_tmp_gwas) %>%
+  dplyr::select(-c(A1_tmp_gwas, A2_tmp_gwas))
+
+mismatches_v2 = subset(mismatches, mismatches$A1_gwas_gwasqtl != mismatches$A1_ref)
+mismatches_v3 = subset(mismatches, !mismatches$SNP_gwas %in% mismatches_v2$SNP_gwas)
+gwaseqtlref = rbind(gwaseqtlref, mismatches_v3)
+  
+
+gwaseqtlref = gwaseqtlref %>%
+  dplyr::select(ends_with("gwasqtl")) %>%
+  rename_with(~ gsub("_gwasqtl", "", .x, fixed = TRUE)) %>%
+  #dplyr::select(SNP = SNP_gwas,
+  #              BETA_GWAS = Beta_gwas, A1_gwas, A2_gwas, 
+  #              CHR = CHR_eqtl, ENSEMBL = ENSEMBL_eqtl,
+  #              HGNC = HGNC_eqtl, BETA_EQTL = Beta_eqtl, A1_eqtl = A1_eqtl) %>%
+  dplyr::relocate(CHR, .after = SNP) %>%
+  dplyr::select(-A1_eqtl)
+
+
+get_tempdir = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/QC_V2"
+writepath = paste0(get_tempdir, "/PDRISK.txt")
+fwrite(gwaseqtlref, writepath, quote = F, sep = "\t",
+       col.names = T, row.names = F)
+```
+
+
+
+# Run insexp_ref_match to map the GWAS/eQTL SNPs to the reference panel SNPs
+
+Iterate over a tmp folder with the GWAS/QTL QCed datasets
+Run the bash script for each of them
+This tool will output the final data on the qc folder
+
+```{bash}
+#tmp_folder=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/*
+#outpath=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/
+
+#tmp_folder=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/TESTS_AUG2023/*
+#outpath=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/TESTS_AUG2023/
+
+#tmp_folder=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/TESTS_FIXDIRECTIONS/*
+#outpath=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/TESTS_FIXDIRECTIONS/
+
+#tmp_folder=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/TESTS_ALL_MUNGESUMSTATSQC_FIXDIRECTIONS/*
+#outpath=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/TESTS_ALL_MUNGESUMSTATSQC_FIXDIRECTIONS/
+
+tmp_folder=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/QC_V2/* #TESTS_REFPANELMATCH_FIXDIRECTIONS/*
+outpath=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/QC_V2/ #TESTS_REFPANELMATCH_FIXDIRECTIONS/
+
+
+for file in $tmp_folder
+do
+filename=$(basename $file)
+#echo $filename
+#echo $file
+sh /home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/utils/insexp_ref_match.sh \
+  -r /home/rstudio/DATA/AMPPD/QC_DATA/SNPLISTS/AMPPD_w_rsids_rsidsOnly.snplist \
+  -g $file \
+  -o $outpath$filename
+done
+
+#rm -rf /home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/gwasqtlqc/*
+```
+
+
+# Move the raw GWASs that have been QCed to an archive
+
+```{r}
+gwasnames = list.files("~/celltyping_wd/celltype_twmr/test_epqtl/data/gwas/gwas_noqc/", pattern = "[^archive|README]")
+
+filelength = length(gwasnames)
+if (!filelength == 0) {
+  toarchive = paste0("~/celltyping_wd/celltype_twmr/test_epqtl/data/gwas/gwas_noqc/archive/", gwasnames)
+  gwaspaths = list.files("~/celltyping_wd/celltype_twmr/test_epqtl/data/gwas/gwas_noqc/", pattern = "[^archive|README]", full.names = TRUE)
+  file.rename(from = gwaspaths, to = toarchive)
+}
+```
+
+
+
+
+# Create working directory
+
+```{r}
+source(here::here("../R", "workdirops.R"))
+
+data_path = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/"
+files = list.files(data_path, pattern = "^[^chunk]", full.names = T)
+workdir = "~/celltyping_wd/celltype_twmr/test_epqtl/workdir/"
+
+# data_path = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/QC_V2/"
+# files = list.files(data_path, pattern = "^[^chunk]", full.names = T)[3]
+# workdir = "~/celltyping_wd/celltype_twmr/test_epqtl/workdir/"
+
+map(files, function(file) {
+  cat("Creating wd for study:", basename(file), "\n")
+  data = fread(file)
+  filename = basename(file)
+  getnames = str_split(filename, pattern = "_", n = 3) %>% unlist()
+  
+  qtlname = getnames[1]
+  gwasname = getnames[2]
+  
+  dircheck = paste0(workdir, gwasname, "_",qtlname, "/")
+  
+  if (!file.exists(dircheck)) {
+    workdir = createworkdir(workdir = workdir, 
+                            gwasname = gwasname, 
+                            qtlname = qtlname)
+    
+    mclapply(unique(data$CHR), mc.cores = 22 ,
+             function(chr, workdirpath = workdir) {
+               df = data %>% filter(CHR == chr)
+               chrdir = paste(workdirpath, "chr", chr, "/" ,sep = "")
+               dir.create(chrdir)
+               createworkdir(workdir = chrdir, genename = df$ENSEMBL)
+             })
+  }
+})
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# DEPRECATED 
+
+```{r eval = FALSE}
+source(here::here("../R", "workdirops.R"))
+
+data_path = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/"
+list.files(data_path)
+workdir = "~/celltyping_wd/celltype_twmr/test_epqtl/workdir/"
+# Load data to work with
+data = fread(paste0(data_path,  "eqtlgen_pdrisk_gwas.txt"))
+
+workdir = createworkdir(workdir = workdir, gwasname = "pdrisk",qtlname = "metabrain")
+parallel::mclapply(unique(data$CHR), mc.cores = 22 , function(chr, workdirpath = workdir) {
+  # Create dir for the chr namber
+  df = data %>% filter(CHR == chr)
+  chrdir = paste(workdirpath, "chr", chr, "/" ,sep = "")
+  dir.create(chrdir)
+  # Create a folder for each gene
+  createworkdir(workdir = chrdir, genename = df$ENSEMBL)
+})
+```
+
+
+
+
+# GWAS QC
+
+# I will need to come up with a couple of functions to tidy this chunk up
+
+```{r eval = FALSE}
+source(here::here("../R", "gwasqc.R"))
+dbSNP = SNPlocs.Hsapiens.dbSNP144.GRCh37
+
+heightgwas_qc = heightgwas %>%
+  filter(str_detect(MarkerName, "^rs")) %>%
+  convert_rs_to_loc(., SNP_column = "MarkerName", dbSNP = dbSNP)
+
+chrbp =
+  str_split_fixed(heightgwas_qc$loc, pattern = ":", n = 2) %>%
+  as.data.frame() %>%
+  mutate(across(everything(), as.numeric)) %>%
+  setNames(nm = c("CHR", "BP"))
+
+
+heightgwas_qc = cbind(chrbp, heightgwas_qc) %>%
+  drop_na(CHR) %>%
+  dplyr::select(SNP = MarkerName, CHR, BP,
+                A1 = Allele1, A2 = Allele2,
+                FREQ = Freq.Allele1.HapMapCEU,
+                BETA_GWAS = b, SE, P = p, N)
+
+fwrite(heightgwas_qc, "../data/GIANT_HEIGHT_GCed.tsv", sep = "\t",
+       col.names = T, row.names = F, quote = F)
+```
+
+
+
+
+
+# Generate list of genes per chromosome file
+
+```{r eval = FALSE}
+# Save all genes on a file
+lapply(unique(genesdf$CHR), function(chr) {
+  tosave = subset(genesdf, CHR == chr)
+  tosave = tosave %>% dplyr::select(GENENAME = ENSEMBL)
+  fwrite(tosave, paste0(workdirpath, gwasname, "_genes_", paste0("chr", chr), ".txt"),
+         col.names = F, sep = "\t", quote = F)
+})
+```
+
+
+# Now we want to grep the eqtl files so that we can open them pain free in R
+
+This is the code to do it for metabrain
+
+```{r eval = FALSE}
+metabrain = "/home/rstudio/DATA/eQTLdata/METABRAIN/METABRAIN_QC_V2/CORTEX/"
+
+outdirpath = paste0(workdirpath, "eqtl_filtered/")
+dir.create(outdirpath)
+
+start_time <- Sys.time()
+lapply(c(1:22), function(chr){
+  genefile <- sprintf("%spdrisk_genes_chr%s.txt",
+                   workdirpath,
+                   chr)
+  eqtlfile <- sprintf("%sQCed_2020-05-26-Cortex-EUR-%s-biogenformat.txt.gz",
+                      metabrain,
+                      chr)
+  out = sprintf("%seqtlfiltered_chr%s.txt",
+                outdirpath,
+                chr)
+  #cat(genefile, "\n", eqtlfile, "\n", out)
+  system(paste0("zgrep -Fwf ", genefile," ", eqtlfile, " > ", out ))
+})
+end_time <- Sys.time()
+cat("\n Time: ", end_time - start_time)
+```
+
+This is the filtering of all eqtl data for eQTLGen
+
+```{r eval = FALSE}
+eqtlGen = "/home/rstudio/DATA/eQTLdata/eQTLGen/eQTLGen_split/"
+
+outdirpath = paste0(workdirpath, "eqtl_filtered/")
+dir.create(outdirpath)
+
+start_time <- Sys.time()
+lapply(c(1:22), function(chr){
+  genefile <- sprintf("%sheightgwas_genes_chr%s.txt",
+                   workdirpath,
+                   chr)
+  eqtlfile <- sprintf("%seqtlgen_chr%s.txt",
+                      eqtlGen,
+                      chr)
+  out = sprintf("%seqtlfiltered_chr%s.txt",
+                outdirpath,
+                chr)
+  #cat(genefile, "\n", eqtlfile, "\n", out)
+  system(paste0("zgrep -Fwf ", genefile," ", eqtlfile, " > ", out ))
+})
+end_time <- Sys.time()
+cat("\n Time: ", end_time - start_time)
+```
+

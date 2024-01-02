@@ -1,0 +1,57 @@
+---
+title: "Compare_geneSets"
+author: "AMCalejandro"
+date: '2023-02-24'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, engine.opts = list(bash = "-l"))
+```
+
+
+> AIM: To compare the set of genes we get using TWMR with the set we get from LDSC and MAGMA.  
+In addition, we want to map the TWMR set of genes with the set of genes representing GTEX tissues
+
+
+# Process TWMR results
+```{r}
+source(here::here("../R", "genesfinder.R"))
+
+ncbigeneref = setNames(fread("~/DATA/REF_PANEL/NCBI_GENE_REF/NCBI37.3.gene.loc.extendedMHCexcluded"),
+                        c("ENTREZ", "CHR", "START", "END", "STRAND", "HGNC"))
+
+ncbigeneref_qc = generefqc(ncbigeneref) %>%
+  dplyr::select(-START, END)
+
+twmr_pdrisk = fread("~/celltyping_wd/celltype_twmr/res/PDRISK_TWMR.txt") %>%
+  inner_join(ncbigeneref_qc, by = c("gene" = "ENSEMBL"))
+
+twmr_pdrisk_sign = subset(twmr_pdrisk, P < (0.05 / 16000) )
+
+```
+
+
+# Map the TWMR gene set with GTEX tissues top 15% dysregulated genes
+
+We are going to show the percentage of genes that overlap with the top 10 genes
+
+```{r}
+top10_gtex = fread("~/celltyping_wd/cellType_progGWAS/data/gtex/top10_files/top10_forMAGMA.txt", header = F)
+top10_gtex = top10_gtex %>% column_to_rownames(., var = "V1")
+
+rateoverlap = function(tissueset, gwaset, ngenes) {
+  overlap = which(gwaset %in% tissueset)
+  return(length(overlap) / ngenes)
+}
+
+assessOverlap = apply(top10_gtex, 1, function(x) {
+  rateoverlap(tissueset = x,
+              gwaset = twmr_pdrisk_sign$ENTREZ,
+              ngenes = 15) 
+  }) %>% as.data.frame
+
+```
+
+
+

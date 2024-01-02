@@ -1,0 +1,137 @@
+---
+title: "Get matrices"
+author: "AMCalejandro"
+date: '2023-01-04'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, engine.opts = list(bash = "-l"))
+```
+
+
+
+
+
+# Set up
+
+```{r}
+library(tidyverse)
+library(purrr)
+library(data.table)
+library(here)
+library(AnnotationDbi) #BiocManager::install("AnnotationDbi")
+library(org.Hs.eg.db) #BiocManager::install("org.Hs.eg.db")
+library(parallel) #To send tasks to the processing cores in parallel
+library(data.table)
+
+
+
+# Get paths
+data_path = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/"
+list.files(data_path)
+workdirpath = "~/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/genes_final_test/"
+
+# Load data to work with
+data = fread(paste0(data_path,  "eqtlgen_height_gwas.txt"))
+
+
+
+#pdriskgwas = fread("../../../gwas_data/pdriskGWAS_ldscQCed.tsv")
+#heightgwas = fread("../data/GIANT_HEIGHT_GCed.tsv")
+
+#eqtl_path = "/home/rstudio/celltyping_wd/test_epqtl/tmp/pdrisk_metabraincortex_twmr/eqtl_filtered"
+#workdirpath = "~/celltyping_wd/test_epqtl/tmp/pdrisk_metabraincortex_twmr/genes_tmp/"
+
+#eqtl_path = "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/eqtl_filtered"
+#workdirpath = "~/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr//genes_tmp/"
+```
+
+
+
+```{r}
+source(here::here("../R", "workdirops.R"))
+
+map(unique(data$CHR), function(chr) {
+  # Create dir for the chr namber
+  df = data %>% filter(CHR == chr)
+  chrdir = paste(workdirpath, "chr", chr, "/" ,sep = "")
+  dir.create(chrdir)
+  # Create a folder for each gene
+  createworkdir(workdir = chrdir, genename = df$ENSEMBL)
+})
+```
+
+
+# Create directory for each gene and save data in cojo format
+```{r}
+#Run this with mclapply
+source(here::here("../R", "createWorkdir.R"))
+
+map(unique(gwaseqtl_sign$CHR), function(chr) {
+  # Create dir for the chr namber
+  df = gwaseqtl_sign %>% filter(CHR == chr)
+  chrdir = paste(workdirpath, "chr", chr, "/" ,sep = "")
+  dir.create(chrdir)
+  # Create a folder for each gene
+  createWorkdir(workdir = chrdir, genename = df$ENSEMBL)
+})
+```
+
+
+
+# Run cojo job
+```{bash}
+wd=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/genes_final_test/
+gwaseqtl=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/eqtlgen_height_gwas.txt
+eqtlname="eqtlgen"
+nohup Rscript ~/celltyping_wd/celltype_twmr/test_epqtl/utils/run_cojo.R --args $wd $gwaseqtl $eqtlname  2>&1 &
+```
+
+# Run matrix expansion job
+
+```{bash}
+wd=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/genes_tmp_NEW/
+gwaseqtl=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/eqtlgen_height_gwas.txt
+eqtlname="eqtlgen"
+nohup Rscript ~/celltyping_wd/celltype_twmr/test_epqtl/utils/run_matrixexpand.R --args $wd $gwaseqtl $eqtlname > run_matrixexpand.OUT 2>&1 &
+```
+
+
+# Run job as an Rscript 15/03
+
+```{bash}
+wd=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/genes_FINAL_V3/
+gwaseqtl=/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/gwasqtl_qc/eqtlgen_height_gwas.txt
+eqtlname="eqtlgen"
+nohup Rscript ~/celltyping_wd/celltype_twmr/test_epqtl/utils/run_matrixexpand.R --args $wd $gwaseqtl $eqtlname > run_matrixexpand.OUT 2>&1 &
+```
+
+
+
+# Check matrices against ELEONARA matrices
+
+```{r}
+geteleonaragenes = split(see_eleonara_genes$ENSEMBL, see_eleonara_genes$CHR)
+getfilenames = map2(geteleonaragenes, names(geteleonaragenes), function(gene, chr) {
+  chr = as.character(chr)
+  paste0("~/celltyping_wd/celltype_twmr/test_epqtl/tmp/heightgwas_eqtlgen_twmr/genes_tmp/chr",chr, "/", gene, "/", gene, ".txt.jma.cojo")
+  }) %>% base::unlist() %>%
+  base::unname()
+
+readjma = setNames(map(getfilenames, function(file) {
+  if (file.exists(file)) {
+    fread(file)
+  }
+}), see_eleonara_genes$ENSEMBL)
+```
+
+
+
+
+
+
+
+
+
+

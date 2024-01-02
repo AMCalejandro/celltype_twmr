@@ -1,0 +1,563 @@
+---
+title: "enrichment_analysis "
+author: "AMCalejandro"
+date: '2023-02-24'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, engine.opts = list(bash = "-l"))
+```
+
+
+
+> AIM: In this markdown, we generate the metabrain datasets filtered by the SNPs mapped from the input GWAS
+
+# Set up
+
+```{r message=FALSE}
+library(tidyverse)
+#library(purrr)
+library(data.table)
+library(here)
+library(AnnotationDbi) #BiocManager::install("AnnotationDbi")
+library(VGAM) # To compute the P-value probit transformation
+#library(org.Hs.eg.db) #BiocManager::install("org.Hs.eg.db")
+
+`%notin%` <- Negate(`%in%`)
+```
+
+
+# Process the data to get ready for the cell type enrichment analysis.
+
+1. Create an empty matrix with nrows equal to the number of ENSEMBL genes.
+2. We need to compute a Z-score from the P-value.
+  - This Z-scores comes from TWMR
+  - This is the association that a gene has with the phenotype based on TWMR using eQTL data.
+  - To get the Z-score we can use a probit transformation (𝑍𝑔 = Φ(1 − 𝑃𝑔).
+    - Essentially we map low p-values onto high positive Z-scores
+3. I need to consider including confounding variables
+  - gene size?
+  - Number of SNPs?
+4. Fit the model 𝑍 = 𝛽0 + 𝑆𝛽𝑠 + 𝐶𝛽𝑐 + 𝜀
+  -  S -> The gene-set indicator variable - This comes from the gene expressiondata
+  -  C -> The covariable matrix
+          By default the gene set variable is conditioned on the gene size, gene density
+          (representing the relative level of LD between SNPs in that gene) and the inverse of the mean MAC in
+          the gene (to correct for potential power loss in very low MAC SNPs), as well the log value of these three
+          variables.
+  - 𝜀 -> The residuals are modelled as multivariate normal with
+          correlations set to the gene-gene correlations computed during the gene analysis. This is to account
+          for the LD between genes in close proximity to each other.
+  - Z -> probit transformation of P-value coming from TWMR analysis
+
+"""
+The gene-set p-value is the p-value resulting from a test on the coefficient 𝛽𝑠, testing the null
+hypothesis 𝐻0: 𝛽𝑠 = 0 against the one-sided alternative 𝐻𝐴: 𝛽𝑠 > 0. In effect, this tests whether the
+(conditional) mean association with the phenotype of genes in the gene set is greater than that of
+genes not in the gene set. 
+"""
+
+"""
+Also available as a form of gene-level analysis is the gene property analysis. This is essentially
+the same model as the competitive gene-set analysis, but using a continuous variable as predictor
+rather than a binary indicator like a gene set. A difference is that by default the test of the coefficient
+is two-sided in the gene property analysis. This can be used to test for example whether tissue-specific
+differential expression levels are predictive of associations with a phenotype (which could point to the
+relevance of particular tissues to the aetiology of that phenotype).
+"""
+
+
+
+# Load the data
+```{r}
+# Load ncbi gene ref
+ncbigeneref = fread("~/DATA/REF_PANEL/NCBI_GENE_REF/NCBI37.3.gene.loc.extendedMHCexcluded")
+colnames(ncbigeneref) <- c("ENTREZ", "CHR", "START", "END", "STRAND", "HGNC")
+
+# Load TWMR data
+#pdriskeqtlgen_twmr = fread("~/celltyping_wd/celltype_twmr/test_epqtl/res/eqtlgen_height.res")
+
+allfiles = list.files("~/celltyping_wd/celltype_twmr/test_epqtl/res/", pattern = ".res$", full.names = T)
+#allfiles = list.files("~/celltyping_wd/celltype_twmr/test_epqtl/res/HOLD_DATA/", pattern = ".res$", full.names = T)[1]
+d = data.frame(filename = allfiles) %>%
+  dplyr::mutate(data = purrr::map(filename, read_tsv))
+                #studyname = tools::file_path_sans_ext(basename(filename))) 
+
+# Load gtex tissue expression QCed data
+gtex_matrix = readRDS("~/celltyping_wd/celltype_twmr/test_epqtl/data/expression/gtex/gtexexpression.ready.RDS")
+
+# Load top 10% gtex tissue data
+gtex_indicator = read.table("~/celltyping_wd/celltype_twmr/test_epqtl/data/expression/gtex/top10_files/top10_forMAGMA.txt")
+```
+
+
+
+
+# Construct Z-scores matrix based on TWMR alpha
+
+```{r warning=FALSE}
+#1 Minor QC on the ncbi gene ref and the gtex matrix
+source(here::here("../R", "genesfinder.R"))
+ncbigeneref_qc = generefqc(ncbigeneref)
+# Prcoess gtex_matrix
+gtex_matrix_qc = gtex_matrix %>%
+  mutate(Lvl5 = make.names(Lvl5)) %>%
+  dplyr::select(Gene, Lvl5, Expr_sum_mean, specificity)
+
+
+
+
+#2 Filter the QC ncbigeneref to match genes available on TWMR
+#ncbigeneref_qc_overlap = subset(ncbigeneref_qc, ENSEMBL %in% pdriskeqtlgen_twmr$gene)
+ncbigeneref_qc_overlap = map(d$data, ~subset(ncbigeneref_qc, ENSEMBL %in% .x$gene))
+
+
+
+
+#3 Construct outcome matrix from the probit trnasformation of the twmr p-values with confounders
+
+# twmr_zscore = ncbigeneref_qc_overlap %>%
+#   dplyr::select(ENSEMBL, ENTREZ) %>%
+#   inner_join(pdriskeqtlgen_twmr %>% dplyr::select(gene, P, Nsnps, Ngene), by = c("ENSEMBL"="gene")) %>%
+#   dplyr::mutate(zscore = VGAM::probitlink(P)) %>%
+#   dplyr::select(-P) 
+
+twmr_zscore = map2(ncbigeneref_qc_overlap, d$data, function(ncbidf, twmrdf) {
+  ncbidf %>%
+    dplyr::select(ENSEMBL, ENTREZ) %>%
+    inner_join(twmrdf %>% dplyr::select(study, gene, P, Nsnps, Ngene), by = c("ENSEMBL"="gene")) %>%
+    dplyr::mutate(zscore = VGAM::probitlink(P)) %>%
+    dplyr::select(-P) %>%
+    dplyr::relocate(study)
+})
+
+
+
+#4. Construct the covariates matrix
+# Create list of genes for each tissue as an element
+tissuegenes = lapply(1:nrow(gtex_indicator), function(index) {
+  gtex_indicator[index, 2:ncol(gtex_indicator)] %>% 
+    as.vector() %>% 
+    unlist %>% 
+    unname
+}) %>% setNames(., gtex_indicator$V1)
+
+tissuegene_long  = enframe(tissuegenes) %>% 
+  unnest(value) %>%
+  mutate(value = as.character(value))
+
+
+
+
+#5. Process the gene expression data and generate the indicator variable (1 or 0) as well as the continuous variable
+
+# twmr_zscore_geneind = twmr_zscore %>% 
+#   left_join(tissuegene_long, by = c("ENTREZ" = "value")) %>%
+#   dplyr::mutate(indicator = 1) %>%
+#   dplyr::filter(!is.na(name)) %>%
+#   dplyr::filter(zscore %notin% c(Inf,-Inf)) %>%
+#   tidyr::pivot_wider(names_from = name, values_from = indicator, values_fill = 0) %>%
+#   nest(data_indicator = -c(ENSEMBL:zscore))
+
+
+# twmr_zscore_geneexp = twmr_zscore %>% 
+#   left_join(gtex_matrix_qc, c("ENSEMBL"="Gene")) %>%
+#   dplyr::mutate(indicator = 1) %>%
+#   dplyr::filter(!is.na(Lvl5)) %>%
+#   dplyr::filter(zscore %notin% c(Inf,-Inf)) %>%
+#   tidyr::pivot_wider(names_from = Lvl5, values_from = c(Expr_sum_mean, specificity), values_fill = 0)  %>%
+#   nest(expresion = starts_with("Expr"), specificity = c(starts_with("specificity")))
+
+twmr_zscore_all = 
+  map(twmr_zscore, function(df) {
+
+    df1 = df %>% 
+      left_join(tissuegene_long, by = c("ENTREZ" = "value")) %>%
+      dplyr::mutate(indicator = 1) %>%
+      dplyr::filter(!is.na(name)) %>%
+      dplyr::filter(zscore %notin% c(Inf,-Inf)) %>%
+      tidyr::pivot_wider(names_from = name, values_from = indicator, values_fill = 0) %>%
+      nest(data_indicator = -c(study:zscore))
+    
+    df2 = df %>% 
+      left_join(gtex_matrix_qc, c("ENSEMBL"="Gene")) %>%
+      dplyr::mutate(indicator = 1) %>%
+      dplyr::filter(!is.na(Lvl5)) %>%
+      dplyr::filter(zscore %notin% c(Inf,-Inf)) %>%
+      tidyr::pivot_wider(names_from = Lvl5, values_from = c(Expr_sum_mean, specificity), values_fill = 0)  %>%
+      nest(expresion = starts_with("Expr"), specificity = c(starts_with("specificity"))) %>%
+      dplyr::select(-indicator)
+    
+    return(inner_join(df1, df2))
+  }) #%>% setNames(., tools::file_path_sans_ext(basename(allfiles)))
+
+
+#twmr_zscore_all = inner_join(twmr_zscore_geneexp, twmr_zscore_geneind)
+
+```
+
+# Perform enrichment tests
+
+```{r}
+
+celltypeenrichment = function(df, index) {
+  addcol = colnames(df)[index]
+  #formula = stats::as.formula(paste(". ~ . + ", addcol))
+  #modelupdate = stats::update(basemodel, formula)
+  formula = as.formula(paste("zscore ~ Nsnps + Ngene", addcol, sep = " + "))
+  modelfit = lm(formula, data = df)
+  tissue_metric = broom::tidy(modelfit)[4, ]
+  return(tissue_metric)
+  
+}
+
+
+#twmr_zscore_all = inner_join(twmr_zscore_geneexp, twmr_zscore_geneind)
+#base_formula = as.formula("zscore ~ Nsnps + Ngene")
+
+# check_out = map(c(6:8), function(inestdf) {
+# 
+#   #cat("iter ", inestdf)
+#   dfunest = bind_rows(twmr_zscore_all[[inestdf]])
+#   tmp = twmr_zscore_all[3:5]
+#   dfunest = cbind(tmp, dfunest)
+#   
+#   enrichment_out =  map_df(4:ncol(dfunest),  
+#                            ~celltypeenrichment(df = dfunest, index = .x))
+#   
+#   enrichment_out
+# })
+
+
+out = lapply(1:length(twmr_zscore_all), function(i) {
+  
+  mytwmr = twmr_zscore_all[[i]]
+  study = unique(twmr_zscore_all[[i]]$study)
+  
+  check_out = map(c(7:9), function(inestdf,  twmrdf = mytwmr) {
+    
+    predname = colnames(twmrdf)[inestdf]
+    dfunest = bind_rows(twmrdf[[inestdf]])
+    tmp = twmrdf[4:6]
+    dfunest = cbind(tmp, dfunest)
+  
+    enrichment_out =  map_df(4:ncol(dfunest),  
+                             ~celltypeenrichment(df = dfunest, index = .x))
+  
+    enrichment_out$testtype = predname
+    
+    # Correct for multiple testing
+    n = length(unique(enrichment_out$term))
+    enrichment_out$q = p.adjust(p = enrichment_out$p.value, method = "fdr", n = n)
+    
+    # clean up term
+    enrichment_out$term = gsub("Expr_sum_mean_|specificity_", "", enrichment_out$term)
+    
+    enrichment_out
+    
+  }) %>% 
+    bind_rows() %>%
+    mutate(study = .env[["study"]])
+  
+  check_out
+})
+  
+```
+
+
+
+# Add multiple testing correction
+
+```{r}
+
+```
+
+
+
+# Write all results
+
+```{r}
+map(out, function(towrite) {
+  name = unique(towrite$study)
+  fwrite(towrite, paste0("~/celltyping_wd/celltype_twmr/test_epqtl/res_enrichment/", name, "_enrich.res"),
+         sep = "\t", quote = F, col.names = T, row.names = F)
+})
+```
+
+
+# Join all data and cplit by testtype
+
+```{r}
+allres = bind_rows(out)
+
+allres_split = allres %>% 
+  group_split(testtype)
+
+```
+
+
+
+
+# Plot results
+
+```{r}
+
+pdgwas = map(allres_split, function(testype) {
+  
+  fig = ggplot2::ggplot(testype) +
+  ggplot2::geom_tile(color = "gray",
+    ggplot2::aes_string(x = "study", 
+                        y = "term", fill = "q")) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, hjust = 1)) +
+  ggplot2::theme(legend.position = "right") +
+  ggplot2::xlab("") +
+  ggplot2::ylab("") +
+  ggplot2::scale_fill_gradient(low = "darkblue", high = "white") +
+  ggplot2::ggtitle("TWMR-ENRICHMENT")
+  
+  print(fig)
+  
+    ##### Write the figures to PDF ####
+  grDevices::pdf(paste0("../tmp/res_gtex_", unique(testype$testtype), ".pdf"), width = 12, height = 10)
+  grDevices::jpeg(paste0("../tmp/res_gtex_", unique(testype$testtype), ".jpg"), width = 30, height = 30)
+  methods::show(fig)
+  grDevices::dev.off()
+})
+
+
+
+pdrisk_only = allres %>% filter(study == 'eqtlgen_pdrisk')
+pdrisk_only = pdrisk_only %>% mutate(testtype = gsub("data_indicator", "top10", testtype))
+pdrisk_only = pdrisk_only %>% mutate(testtype = gsub("expresion", "mean_exp", testtype))
+
+
+fig = ggplot2::ggplot(pdrisk_only) +
+  ggplot2::geom_tile(color = "gray",
+                     ggplot2::aes_string(x = "testtype", 
+                        y = "term", fill = "q")) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, hjust = 1)) +
+  ggplot2::theme(legend.position = "right") +
+  ggplot2::xlab("") +
+  ggplot2::ylab("") +
+  ggplot2::scale_fill_gradient(low = "darkblue", high = "white") +
+  ggplot2::ggtitle(" PDRISK TWMR-ENRICHMENT") + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.y = element_text(size = 11),
+        axis.text.x = element_text(size = 12))
+
+
+jpeg(filename = "../tmp/res_gtex_results.jpg", width = 5, height = 10, units = 'in', res = 500 )
+fig
+dev.off()
+```
+
+
+
+
+```{r}
+# Bind all data, and calculate dot sizes
+results = map(all_gwas, function(x) {
+  x = bind_rows(x, .id = "LABEL")
+  x %>% filter(level == .env[["annotLevel"]])
+  x$dotsize <- cut(x = x$q, 
+                   breaks = c(0,0.00001,0.0001,0.001,0.05,1),
+                   labels = c(4,3,2,1,NA))
+  x
+})
+
+
+# PLOT and save
+pdgwas = ggplot2::ggplot(results[[1]]) +
+  ggplot2::geom_tile(color = "gray",
+    ggplot2::aes_string(x = "LABEL", 
+                        y = "Celltype", fill = "q")) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, hjust = 1)) +
+  ggplot2::theme(legend.position = "right") +
+  ggplot2::xlab("") +
+  ggplot2::ylab("") +
+  ggplot2::scale_fill_gradient(low = "darkblue", high = "white") +
+  ggplot2::ggtitle("MAGMA")
+  #ggplot2::geom_point(
+  #  ggplot2::aes_string(x = "LABEL", y = "Celltype", 
+  #                      size = "q"), 
+  #  col = "black")
+
+grDevices::pdf(sprintf("%s/CombinedRes_TilePlot_MAGMA_noDendro_PD_level%s_%s.pdf", 
+                       figurePath, annotLevel, fileTag),
+               width = width, height = height)
+methods::show(pdgwas)
+grDevices::dev.off()
+
+
+othergwas = ggplot2::ggplot(results[[2]]) +
+  ggplot2::geom_tile(color = "gray",
+    ggplot2::aes_string(x = "LABEL", 
+                        y = "Celltype", fill = "q")) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, hjust = 1)) +
+  ggplot2::theme(legend.position = "right") +
+  ggplot2::xlab("") +
+  ggplot2::ylab("") +
+  ggplot2::scale_fill_gradient(low = "darkblue", high = "white") +
+  ggplot2::ggtitle("MAGMA") 
+  #ggplot2::geom_point(
+  #  ggplot2::aes_string(x = "LABEL", y = "Celltype", 
+  #                      size = "q"), 
+  #  col = "black")
+  
+grDevices::pdf(sprintf("%s/CombinedRes_TilePlot_MAGMA_noDendro_NOPD_level%s_%s.pdf", 
+                       figurePath, annotLevel, fileTag),
+               width = width, height = height)
+methods::show(othergwas)
+grDevices::dev.off()
+```
+
+
+
+
+
+```{r}
+# magma_tileplot from https://github.com/neurogenomics/MAGMA_Celltyping/blob/master/R/magma_tileplot.r
+# Minor changes applied according to my needs
+
+
+#' MAGMA tileplot
+#'
+#' Used after merging results from multiple GWAS studies.
+#'
+#' @param ctd Cell type data structure containing "specificity_quantiles".
+#' @param results Output from either 
+#' \link[MAGMA.Celltyping]{calculate_celltype_associations} or
+#' \link[MAGMA.Celltyping]{calculate_conditional_celltype_associations}.
+#' @param fileTag String appended to the names of the saved PDFs,
+#'  i.e. the name of the celltype data file used.
+#' @param height Height of the output tileplot.
+#' @param width Width of the output tileplot.
+#' @param annotLevel Annotation level to plot the results for.
+#' @param output_path Location where the results should be plotted.
+#' 
+#' @return List of two ggplot objects.
+#' 
+#' @export 
+#' @importFrom stats p.adjust 
+#' @importFrom methods show
+#' 
+magma_tileplot <- function(ctd,
+                           results, 
+                           height = 13, 
+                           width = 4, 
+                           annotLevel = 1,
+                           fileTag = "", 
+                           output_path = tempdir()) {
+
+  results <- results[results$level == annotLevel, ]
+
+  magmaPaths <- get_magma_paths(output_path = output_path)
+  figurePath <- magmaPaths$tiles
+  
+  ctdDendro <- MAGMA.Celltyping:::get_ctd_dendro(ctd, annotLevel = annotLevel)
+  results$Celltype <- factor(results$Celltype, 
+                             levels = ctdDendro$ordered_cells)
+
+  # Prepare the tileplot
+  
+  fig_Heatmap_WOdendro = ggplot2::ggplot(results) +
+    ggplot2::geom_tile(color = "gray",
+                       ggplot2::aes_string(x = "LABEL", 
+                                           y = "Celltype", fill = "q")) +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, hjust = 1)) +
+    ggplot2::theme(legend.position = "right") +
+    ggplot2::xlab("") +
+    ggplot2::ylab("") +
+    ggplot2::scale_fill_gradient(low = "darkblue", high = "white") +
+    ggplot2::ggtitle("MAGMA") 
+
+  
+  #### Prepare the dendrogram ###
+  Fig_Dendro <- ggplot2::ggplot(ggdendro::segment(ctdDendro$ddata)) +
+    ggplot2::geom_segment(
+      ggplot2::aes_string(x = "x", y = "y",
+                        xend = "xend", yend = "yend")) +
+    ggplot2::coord_flip() +
+    ggdendro::theme_dendro()
+  Fig_Dendro <- Fig_Dendro + ggplot2::scale_x_continuous(expand = c(0, 1.3))
+
+  
+  
+  ##### Write the figures to PDF ####
+  grDevices::pdf(
+    sprintf("%s/CombinedRes_TilePlot_MAGMA_noDendro_level%s_%s.pdf", 
+          figurePath, annotLevel, fileTag),
+    width = width, height = height)
+  methods::show(fig_Heatmap_WOdendro)
+  grDevices::dev.off()
+  
+  grDevices::pdf(
+    sprintf("%s/CombinedRes_TilePlot_MAGMA_wtDendro_level%s_%s.pdf", 
+            figurePath, annotLevel, fileTag),
+    width = width + 1, height = height)
+  methods::show(gridExtra::grid.arrange(fig_Heatmap_WOdendro,
+                                        Fig_Dendro, 
+                                        ncol = 2, 
+                                        widths = c(0.8, 0.2)))
+  grDevices::dev.off()
+  
+  
+  return(list(heatmap = fig_Heatmap_WOdendro, 
+            dendro = Fig_Dendro))
+}
+```
+
+
+
+
+```{r}
+theme_rhr <-  theme_bw(base_family = "Helvetica") + 
+  theme(panel.grid.major.x = element_blank(),
+        legend.position = "right",
+        strip.text = element_text(size = 8),
+        strip.text.y = element_text(angle = 90, margin = margin(t = 0, r = 20, b = 0, l = 0)),
+        axis.text.x = element_text(size = 15, angle = 90, hjust = 1, vjust = 0.5,  margin = margin(t = 0, r = 0, b = 0, l = 20)),
+        axis.text.y = element_text(size = 15),
+        axis.title.y = element_text(size = 18, vjust = 0.6),
+        axis.title.x = element_text(size = 18, vjust = 0.6),
+        axis.title = element_text(size = 10),
+        panel.spacing = unit(0.1, "lines"))
+
+plotsaveit = ggplot(data=to_plot, aes(x=symbol, y=pscaled)) + geom_bar(stat="identity", fill="steelblue") + 
+  theme_rhr + 
+  geom_hline(yintercept=-log(5e-8),lwd=0.5,colour="red",) + 
+  labs(x='GENE', y ='-log(Pvalue)')
+
+
+jpeg(filename = "SAVE_GENE_TWMR_PVAL.jpg", width = 5, height = 5, units = 'in', res = 500 )
+plotsaveit
+dev.off()
+```
+
+
+```{r}
+# Tidy data and QC
+# We unnest
+# We remove any infinite Zscores
+#tmp = twmr_zscore_geneind %>% unnest(data_indicator)
+# twmr_zscore_geneind = subset(twmr_zscore_geneind, zscore != Inf )
+# base_formula = as.formula("zscore ~ Nsnps + Ngene")
+# basemodel_fit = lm(base_formula, data = twmr_zscore_geneind)
+# 
+# start_index = which(colnames(twmr_zscore_geneind) == "zscore") + 1 # Get the inex of the first tissue
+# 
+# 
+# enrichment_out = map_df(start_index:ncol(tmp), function(index) {
+#   addcol = colnames(tmp)[index]
+#   formula = stats::as.formula(paste(". ~ . + ", addcol))
+#   
+#   modelupdate = stats::update(basemodel_fit, formula)
+#   tissue_metric = broom::tidy(modelupdate)[4, ]
+#   tissue_metric
+#   
+#   })
+# Consider using broom to get tidy results
+
+```
+

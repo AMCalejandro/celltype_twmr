@@ -1,0 +1,102 @@
+---
+title: "qtl_qc"
+author: "AMCalejandro"
+date: '2023-01-04'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, engine.opts = list(bash = "-l"))
+```
+
+
+> AIM: In this markdown, we QC eQTL we will use on this analysis
+
+# Set up
+
+```{r}
+library(tidyverse)
+library(purrr)
+library(data.table)
+library(here)
+library(SNPlocs.Hsapiens.dbSNP155.GRCh37)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+source(here::here("../R", "gwasqc.R"))
+```
+
+
+# eQTL QC
+
+In this section we perform some minor harmonization of the eQTL data
+
+```{r}
+data = data %>% dplyr::rename(`p.value` = Pvalue)
+
+```
+
+```{r}
+data$eQTL = 'ciseQTL_blood'
+```
+
+
+
+```{r}
+for (i in 1:22) {
+  dat_chunk = data %>% filter(SNPChr == i)
+  fwrite(dat_chunk,
+    paste0('/home/rstudio/DATA/eQTLdata/eQTLGen/eQTLGen_split_tmp/eqtlgen_chr', 
+           i, ".txt"),
+    col.names = T, row.names = F, sep = '\t', quote = F
+  )
+}
+
+```
+
+
+
+```{r}
+# QC Cis-eQTL data
+eqtlgensign_path = "~/DATA/eQTLdata/eQTLGen/Significant_eQTLgen_rsID.MAF.BETASE.txt"
+eqtlgensign_path = "~/DATA/eQTLdata/eQTLGen/Significant_eQTLgen_rsID.MAF.UPDATEBETAS.txt"
+# Redo betas with Eleonora functions
+
+
+# Read eQTLGen significant associations
+eqtl_sign =  fread(eqtlgensign_path) %>%
+  df_harmonise(., eqtl = TRUE, 
+               eqtlname = "eqtlgen",
+               get_sign = TRUE)
+
+# Save for now to avoid doing this every time for new upcoming GWASs
+# TODO -  I need to think on a better way to do this
+fwrite(eqtl_sign, "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/eqtlqc/eqtlgen_harmonise_significant_UPDATEBETA_tmp.txt")
+
+
+# QC significant trans-eQTL data
+
+# transeqtlgensign_path = "~/DATA/eQTLdata/eQTLGen/Significant_transeQTLs_rsID.MAF.BETASE.txt"
+# transeqtl_sign =  fread(transeqtlgensign_path) %>%
+#   df_harmonise(., eqtl = TRUE,
+#                eqtlname = "eqtlgen",
+#                get_sign = TRUE)
+# 
+# fwrite(transeqtl_sign, "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/eqtlqc/trans_eqtlgen_harmonise_significant_tmp.txt")
+
+```
+
+
+## QC of metabrain
+
+```{r}
+eqtlmetabrain_path = "/home/rstudio/DATA/eQTLdata/METABRAIN_QC_V2/CORTEX/"
+files = list.files(path = eqtlmetabrain_path, pattern="^QCed",full.names = TRUE)
+
+metabrain_sign = map_df(files, function(file) {
+  data = fread(file)
+  data_harm = df_harmonise(df = data, eqtl = TRUE,
+                           eqtlname = "metabrain", get_sign = TRUE)
+  })
+# Save for now to avoid doing this every time for new upcoming GWASs
+# TODO -  I need to think on a better way to do this
+fwrite(metabrain_sign, "/home/rstudio/celltyping_wd/celltype_twmr/test_epqtl/data/eqtlqc/metabrain_harmonise_significant_tmp.txt" )
+```

@@ -1,0 +1,110 @@
+---
+title: "gwas_qc"
+author: "AMCalejandro"
+date: '2023-01-04'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, engine.opts = list(bash = "-l"))
+```
+
+
+> AIM: In this markdown, we generate the metabrain datasets filtered by the SNPs mapped from the input GWAS
+
+# Set up
+
+```{r}
+library(tidyverse)
+library(purrr)
+library(data.table)
+library(here)
+library(SNPlocs.Hsapiens.dbSNP155.GRCh37)
+library(SNPlocs.Hsapiens.dbSNP144.GRCh37)
+library(BSgenome.Hsapiens.1000genomes.hs37d5)
+library(MungeSumstats)
+source(here::here("../R", "gwasqc.R"))
+```
+
+
+# Read GWASs and QC using MungeSumStats
+
+```{r}
+gwasfiles = list.files(here::here("../", "data", "gwas", "gwas_noqc"), pattern = "[^archive|README]", full.names = T)
+gwasfiles = list.files(here::here("../", "data", "gwas" ,"test"), pattern = "[^archive|README]", full.names = T)
+
+gwas <- tibble(filespath= gwasfiles) %>%
+  mutate(file_contents = map(filespath,fread)) %>%
+  mutate(makenames=basename(filespath))
+
+names(gwas$file_contents) <- gwas$makenames
+
+
+gwasqctmp = map(gwas$file_contents[4], function(mygwas) {
+  MungeSumstats::format_sumstats(path = mygwas,
+                                 ref_genome="GRCh37",
+                                 dbSNP = 155,
+                                 
+                                 snp_ids_are_rs_ids=FALSE,
+                                 bi_allelic_filter = FALSE,
+                                 allele_flip_frq = FALSE,
+                                 allele_flip_check = FALSE,
+                                 allele_flip_drop = FALSE,
+                                 
+                                 strand_ambig_filter = TRUE,
+                                 
+                                 convert_n_int = TRUE,
+                                 impute_beta = TRUE,
+                                 return_data = TRUE,
+                                                               
+                                 nThread = 80,
+                                 force_new = TRUE,
+                                 INFO_filter = 0.8,
+                                 return_format = "data.table")
+                                 #save_path = formatted_path,)
+     })
+
+gwastmp = gwasqc[[1]] %>%
+  dplyr::mutate(Zscore = BETA/SE,
+                BETA = sign(Zscore)*sqrt(1-(1/(1+Zscore^2/N))),
+                SE = 1/sqrt(N))
+
+gwas_qc_cojo = df_harmonise(gwastmp)
+
+fwrite(gwas_qc_cojo, paste0("../data/gwas/gwas_qc/tmp/", "TMP_HEIGHTQCED_UPDATEDBETAS"), 
+         col.names = T, row.names = F, sep= "\t", quote = F)
+
+```
+
+
+
+# Save results to a tmp folder
+
+```{r}
+gwas_qc_cojo = map(gwasqc, function(df) {
+  
+  out_data =df_harmonise(df)
+  print(str(out_data))
+  
+  gwastmp = out_data %>%
+    dplyr::mutate(b = as.numeric(b),
+                  se = as.numeric(se),
+                  Zscore = b/se,
+                  b = sign(Zscore)*sqrt(1-(1/(1+Zscore^2/N))),
+                  se = 1/sqrt(N)) %>%
+    dplyr::select(-Zscore)
+  })  
+
+# # Saving a temporary file for now to avoid doing this very time consuming operation
+map2(gwas_qc_cojo, names(gwas_qc_cojo), function(x, y) {
+  fwrite(x, paste0("../data/gwas/gwas_qc/", tools::file_path_sans_ext(y), "QCed.txt"),
+         col.names = T, row.names = F, sep= "\t", quote = F)
+  })
+
+map2(gwas_qc_cojo, names(gwas_qc_cojo), function(x, y) {
+  fwrite(x, paste0("../data/gwas/gwas_qc/tmp/", tools::file_path_sans_ext(y), "All_MungeSumStats_QC_144_QCed.txt"), 
+         col.names = T, row.names = F, sep= "\t", quote = F)
+  })
+
+```
+
