@@ -1,0 +1,12 @@
+data/
+workflow/*/
+#workflow/expression_process/
+utils/*/
+twmr_eleonora_data/
+tmp/
+software/*zip
+res/
+R/cojoget_expand_SECCOPY.R
+R/cojoget_expand_noparallel.R
+R/targetgenes_cojoget_expand.R
+res_enrichment/
