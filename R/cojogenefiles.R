@@ -35,15 +35,6 @@ runcojo = function(path_ref = NULL,
                    chr = chrnumber,
                    out = path_cojodf) {
 
-    # gctacmd = paste("~/software/gcta-1.94.1",
-    #                 paste0("--bfile ", path_ref),
-    #                 paste0("--cojo-file ", cojo),
-    #                 paste0("--extract ", snps),
-    #                 paste0("--chr ", chr),
-    #                 "--cojo-slct", 
-    #                 "--cojo-p 1e-3",
-    #                 paste0("--out ", out),
-    #                 sep = " ")
     gctacmd = paste("~/software/gcta-1.94.1",
                     paste0("--bfile ", path_ref),
                     paste0("--cojo-file ", cojo),

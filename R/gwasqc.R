@@ -50,19 +50,7 @@ readeqtlchunk = function(eqtlname = "eqtlgen", chr = chrnumber) {
 #' 
 df_harmonise = function(df, eqtl = FALSE, eqtlname = NULL, 
                         get_sign = FALSE) {
-  # if (!eqtl) {
-  #   
-  #   if ("N_CAS" %in% colnames(df)) {
-  #     df$N =  df$N_CAS +  df$N_CON
-  #   } else if ("NSTUDY" %in% colnames(df)) {
-  #     df = df %>% dplyr::rename(N = NSTUDY)
-  #   } else {
-  #     df[ , 'N'] <- NA
-  #   }
-  #   
-  #   if (!"FRQ" %in% colnames(df)) {
-  #     df[ , 'FRQ'] <- NA
-  #   }
+
   if (!eqtl) {
     
     if ("N_CAS" %in% colnames(df)) {
@@ -170,7 +158,6 @@ inst_sign_overlap = function(gwas, eqtl,
 #' @return Dataframe with rs ids and CHR:BP locations.
 #' @export
 #'
-
 convert_rs_to_loc <- function(df, SNP_column, dbSNP){
   
   rs <- BSgenome::snpsById(dbSNP, df[[SNP_column]], ifnotfound = "drop") %>%
@@ -223,7 +210,6 @@ convert_rs_to_loc <- function(df, SNP_column, dbSNP){
 #' @return Dataframe with rs ids and CHR:BP locations.
 #' @export
 #'
-
 convert_loc_to_rs <- function(df, dbSNP){
   
   # If df CHR column has "chr" in name, remove

@@ -171,31 +171,6 @@ cojocompute = function(workdirpath,
             # I would be missing an extra step to try to capture any extra SNP for third GENES
           } else {
             
-            # path_snpsextract = paste0(newdirpath, gene, "/", gene, ".cojosnplist")
-            # data.table::fwrite(data.frame(SNPS = gwaseqtl_sign_snps), path_snpsextract)
-            # path_cojodf = getcojogene(eqtldf = d_filtered,
-            #                           gene = gene,
-            #                           pathwrite = newdirpath)
-            # newpath_out = paste0(tools::file_path_sans_ext(path_cojodf), "_1000G.txt")
-            # 
-            # cojoutput = runcojo(path_ref = path_g1000,
-            #                     cojo = path_cojodf,
-            #                     snps = path_snpsextract,
-            #                     chr = chrnumber,
-            #                     out = newpath_out)
-            # 
-            # captureerr = paste(cojoutput, collapse = " ") %>%
-            #   str_extract_all(".*error.*", simplify = TRUE)
-            # 
-            # 
-            # if (!purrr::is_empty(captureerr)) {
-            #   cojoutput = runcojo(path_ref = path_amppd,
-            #                       cojo = path_cojodf,
-            #                       snps = path_snpsextract,
-            #                       chr = chrnumber,
-            #                       out = path_cojodf)
-            # }
-            
             path_snpsextract = paste0(newdirpath, gene, "/", gene, ".cojosnplist")
             data.table::fwrite(data.frame(SNPS = gwaseqtl_sign_snps), path_snpsextract)
             path_cojodf = getcojogene(eqtldf = d_filtered,

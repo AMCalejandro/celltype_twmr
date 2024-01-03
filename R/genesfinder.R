@@ -4,51 +4,10 @@
 #' @param gwas gwas data.
 #' @param generef the ncbi gene reference panel.
 #' @param pvalue threshold to filter gwas snps.
+#' @param parallel Whether to run the function on a parallel backend.
+#' @param nthreads Number of threads to use if running on a parallel backend.
 #' @return A list of vectors.
 #' 
-# genesfinder = function(gwas, generef, pvalue = 5e-8) {
-#   
-#   gwasfilt = gwas %>%
-#     dplyr::filter(P < .env[["pvalue"]]) %>%
-#     dplyr::select(SNP, CHR, BP)
-#   
-#   generef = generef %>%
-#     dplyr::mutate(START = ifelse(START - 1000000 < 0, 0, START - 1000000),
-#                   END = END + 1000000)
-# 
-#   
-#   
-#   getgenes = lapply(c(1:22), function(chr) {
-#     gwasfiltchunk = gwasfilt %>%
-#       filter(CHR == chr)
-#     
-#     res = c()
-#     if (!(nrow(gwasfiltchunk)==0)) {
-#       generefchunk = 
-#         subset(generef, CHR == chr)
-#       
-#       for (mybp in gwasfiltchunk$BP) {
-#         genesnpmapping = generefchunk %>%
-#           filter((START < mybp) & (END > mybp)) %>%
-#           pull(ENSEMBL)
-#         res <- c(res, genesnpmapping)
-#       }
-#       res <- unique(res)
-#     }
-#     res
-#     })
-#   getgenes = getgenes[sapply(getgenes, Negate(is.null))] %>% unlist()
-#   # TODO
-#   # Approach to filter genes whose START BP is lower than X and 
-#   # whose END BP is higher than X
-#   # THE ONE ON TOP WORKS BUT IT COULD BE IMPROVED
-#   
-#   genechr = generef %>%
-#     dplyr::filter(ENSEMBL %in% getgenes) %>%
-#     dplyr::select(ENSEMBL, CHR)
-#   
-#   return(genechr)
-# }
 genesfinder = function(gwas, generef, pvalue = 5e-8,
                        parallel = FALSE, nthreads = 5) {
   gwasfilt = gwas %>%
@@ -102,7 +61,6 @@ genesfinder = function(gwas, generef, pvalue = 5e-8,
       res
     })
   }
-  
   getgenes = getgenes[sapply(getgenes, Negate(is.null))] %>% unlist()
   # TODO
   # Approach to filter genes whose START BP is lower than X and 
@@ -114,7 +72,6 @@ genesfinder = function(gwas, generef, pvalue = 5e-8,
   
   return(genechr)
 }
-
 
 #' createWorkdir
 #'
@@ -148,5 +105,62 @@ generefqc = function(generef, ensembl_id = F) {
   return(generef)
   
 }
+
+
+#' Genes finder
+#'
+#' Given a pvalue threshold and a gwas, it maps snps to genes based on distance alone
+#' @param gwas gwas data.
+#' @param generef the ncbi gene reference panel.
+#' @param pvalue threshold to filter gwas snps.
+#' @return A list of vectors.
+#' 
+# genesfinder = function(gwas, generef, pvalue = 5e-8) {
+#   
+#   gwasfilt = gwas %>%
+#     dplyr::filter(P < .env[["pvalue"]]) %>%
+#     dplyr::select(SNP, CHR, BP)
+#   
+#   generef = generef %>%
+#     dplyr::mutate(START = ifelse(START - 1000000 < 0, 0, START - 1000000),
+#                   END = END + 1000000)
+# 
+#   
+#   
+#   getgenes = lapply(c(1:22), function(chr) {
+#     gwasfiltchunk = gwasfilt %>%
+#       filter(CHR == chr)
+#     
+#     res = c()
+#     if (!(nrow(gwasfiltchunk)==0)) {
+#       generefchunk = 
+#         subset(generef, CHR == chr)
+#       
+#       for (mybp in gwasfiltchunk$BP) {
+#         genesnpmapping = generefchunk %>%
+#           filter((START < mybp) & (END > mybp)) %>%
+#           pull(ENSEMBL)
+#         res <- c(res, genesnpmapping)
+#       }
+#       res <- unique(res)
+#     }
+#     res
+#     })
+#   getgenes = getgenes[sapply(getgenes, Negate(is.null))] %>% unlist()
+#   # TODO
+#   # Approach to filter genes whose START BP is lower than X and 
+#   # whose END BP is higher than X
+#   # THE ONE ON TOP WORKS BUT IT COULD BE IMPROVED
+#   
+#   genechr = generef %>%
+#     dplyr::filter(ENSEMBL %in% getgenes) %>%
+#     dplyr::select(ENSEMBL, CHR)
+#   
+#   return(genechr)
+# }
+
+
+
+
 
 

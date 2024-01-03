@@ -1,8 +1,10 @@
 #' alphaget
 #'
-#' This function takes the wd path, and it calculates alpha assoc of exposure 
+#' An util to impute alpha using TWMR
 #' outcome for each gene across chromosomes
 #' @param wd working direcotry to look for run alpha in
+#' @param ngwas GWAS sample size
+#' @param neqtl eQTL sample size
 #' @return a data.frame with all alpha results merged
 #'
 alphaget = function(wd, ngwas, neqtl) { 

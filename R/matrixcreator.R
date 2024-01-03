@@ -49,136 +49,18 @@ construct_fullmatrix = function(gene, geneinst, eqtldf, gwas, allgenes, workdir)
   
 }
 
+
 #' jmaprocessor
 #'
 #' This function takes .jma file as input, and removes variants in LD (LD_r > 0.1)
 #' @param gene gene we want to load the .jma file from
 #' @param chrpath The path to the chromosome foldr containing target genes
 #' @param pthresh The threshold to consider significant instruments
+#' @param refpanel The name of the refpanel to use
+#' @param focalgene If we are doing to the COJO results processing for the focal gene
+#' @param focalsnps A vector of the focal SNPs
 #' @return The pruned jma file for the input gene
 #' 
-# jmaprocessor = function(gene, chrpath,
-#                         pthresh =  0.05 / 16000,
-#                         refpanel = NULL) {
-#   if (is.null(refpanel)) {
-#     if (file.exists(paste0(chrpath, gene, "/", gene, ".matrix"))) {
-#       onegenematrix = fread(paste0(chrpath, gene, "/",gene, ".matrix"))
-#       res = gather(onegenematrix, key = GENE, value = b, 
-#                    -c(SNP, BETA_GWAS)) %>%
-#         dplyr::select(SNP, b, GENE) %>%
-#         dplyr::filter(GENE == .env[["gene"]])
-#     } else {
-#       stop(".matrix expected but not found")
-#     }
-#   } else {
-#     if (refpanel == "AMPPD") {
-#       if (file.exists(paste0(chrpath, gene, "/", gene, ".txt.jma.cojo"))) {
-#         jmagene = fread(paste0(chrpath,
-#                                gene, "/",
-#                                gene,
-#                                ".txt.jma.cojo"))
-#         ldgene = fread(paste0(chrpath,
-#                               gene, "/",
-#                               gene,
-#                               ".txt.ldr.cojo"), header = T, sep = "\t")
-#         ldgene = ldgene[,1:(ncol(ldgene) - 1)]
-#         # Try with getting the abs LD scores
-#         ldgene[,2:ncol(ldgene)] = abs(ldgene[,2:ncol(ldgene)])
-#       } else {
-#         stop("1000G as ref panel, but jma not found")
-#       }
-#     } else if (refpanel == "1000G") {
-#       if (file.exists(paste0(chrpath, gene, "/", gene, "_1000G.txt.jma.cojo"))) {
-#         jmagene = fread(paste0(chrpath,
-#                                gene, "/",
-#                                gene,
-#                                "_1000G.txt.jma.cojo"))
-#         ldgene = fread(paste0(chrpath,
-#                               gene, "/",
-#                               gene,
-#                               "_1000G.txt.jma.cojo"), header = T, sep = "\t")
-#       } else {
-#         stop("AMMPD as ref panel, but jma not found")
-#       }
-#     }
-#     
-#     # Use ldpruner to process ldgene and get SNP in LE (r2<0.1) only
-#     snps = jmagene %>% arrange(p) %>% pull(SNP)
-#     getsnps = ldpruner(ldmatrix = ldgene, snps = snps)
-#     jmagene = subset(jmagene, SNP %in% getsnps)
-#     jmagene = subset(jmagene, p < pthresh) # This should no longer be necessary after adding the extract step when running COJO
-#     jmagene$GENE = gene
-#   
-#     res = jmagene %>%
-#       dplyr::select(SNP, b, GENE)
-#   }
-#   return(res)
-# }
-
-# jmaprocessor = function(gene, chrpath,
-#                         pthresh =  0.05 / 16000,
-#                         refpanel = NULL, focalgene = FALSE) {
-#   if (is.null(refpanel)) {
-#     if (file.exists(paste0(chrpath, gene, "/", gene, ".matrix"))) {
-#       onegenematrix = fread(paste0(chrpath, gene, "/",gene, ".matrix"))
-#       res = gather(onegenematrix, key = GENE, value = b, 
-#                    -c(SNP, BETA_GWAS)) %>%
-#         dplyr::select(SNP, b, GENE) %>%
-#         dplyr::filter(GENE == .env[["gene"]])
-#       
-#     } else {
-#       stop(".matrix expected but not found")
-#     }
-#   } else {
-#     if (refpanel == "AMPPD") {
-#       if (file.exists(paste0(chrpath, gene, "/", gene, ".txt.jma.cojo"))) {
-#         jmagene = fread(paste0(chrpath,
-#                                gene, "/",
-#                                gene,
-#                                ".txt.jma.cojo"))
-#       } else {
-#         #stop("1000G as ref panel, but jma not found")
-#         jmagene = NULL
-#       }
-#     } else if (refpanel == "1000G") {
-#       if (file.exists(paste0(chrpath, gene, "/", gene, "_1000G.txt.jma.cojo"))) {
-#         jmagene = fread(paste0(chrpath,
-#                                gene, "/",
-#                                gene,
-#                                "_1000G.txt.jma.cojo"))
-#       } else {
-#         #stop("AMMPD as ref panel, but jma not found")
-#         jmagene = NULL
-#       }
-#     }
-#     
-#     if (!is.null(jmagene)) {
-#       jmagene = subset(jmagene, p < pthresh)
-#       jmagene$GENE = gene
-#       
-#       res = jmagene %>%
-#         dplyr::select(SNP, b, GENE)
-#     } else {
-#       res = NULL
-#     }
-#   }
-#   return(res)
-# }
-
-
-#' jmaprocessor
-#'
-#' This function takes the jma matrix and processses it according to the input gene
-#' @param gne The input gene
-#' @param chrpath The path to the input gene working directory
-#' @param pthresh The threshold to consider an instrument independently and 
-#                 significantly asssociated with the epxosure
-#' @param refpanel The reference panel that was used to get the jma matrix
-#' @param focalgene A boolean. is the input gene the focal gene or a candidate
-#'                    extra exposure
-#' @param focalsnps The snp vector of the focal gene
-#' @return a vector of genes
-#'
 jmaprocessor = function(gene, chrpath,
                         pthresh =  0.05 / 16000,
                         refpanel = NULL, 
@@ -244,74 +126,6 @@ jmaprocessor = function(gene, chrpath,
 }
 
 
-# extraexp_jmaprocessor = function(gene, focalsnps, chrpath,
-#                         pthresh =  0.05 / 16000,
-#                         refpanel = NULL) {
-#   if (is.null(refpanel)) {
-#     if (file.exists(paste0(chrpath, gene, "/", gene, ".matrix"))) {
-#       onegenematrix = fread(paste0(chrpath, gene, "/",gene, ".matrix"))
-#       res = gather(onegenematrix, key = GENE, value = b, 
-#                    -c(SNP, BETA_GWAS)) %>%
-#         dplyr::select(SNP, b, GENE) %>%
-#         dplyr::filter(GENE == .env[["gene"]])
-#       
-#     } else {
-#       stop(".matrix expected but not found")
-#     }
-#   } else {
-#     if (refpanel == "AMPPD") {
-#       if (file.exists(paste0(chrpath, gene, "/", gene, ".txt.jma.cojo"))) {
-#         jmagene = fread(paste0(chrpath,
-#                                gene, "/",
-#                                gene,
-#                                ".txt.jma.cojo"))
-#       } else {
-#         #stop("AMPPD as ref panel, but jma not found")
-#         jmagene = NULL
-#       }
-#     } else if (refpanel == "1000G") {
-#       if (file.exists(paste0(chrpath, gene, "/", gene, "_1000G.txt.jma.cojo"))) {
-#         jmagene = fread(paste0(chrpath,
-#                                gene, "/",
-#                                gene,
-#                                "_1000G.txt.jma.cojo"))
-#       } else {
-#         #stop("1000G as ref panel, but jma not found")
-#         jmagene = NULL
-#       }
-#     }
-#     
-#     if (!is.null(jmagene)) {
-#       jmagene = subset(jmagene, p < pthresh)
-#       jmagene$GENE = gene
-#       res = jmagene %>%
-#         dplyr::select(SNP, b, GENE)
-#     } else {
-#       res = NULL
-#     }
-#   }
-#   res_tmp = subset(res, SNP %in% focalsnps) # Checking the extra exposure share instruments with the focal gene
-#   if (nrow(res_tmp) == 0) { # Extra instrument does not share independent signifcantly associated SNPs
-#     res = NULL
-#   }
-#   return(res)
-# }
-
-
-
-#' exp_expander
-#'
-#' It takes the independent snps associated with a gene expression and it finds other regulated genes
-#' @param snps the independent snps for a certain gene
-#' @param eqtldf the filtered eqtl data frame
-#' @return a vector of genes
-#' 
-exp_expander = function(snps, eqtldf) {
-  exp = subset(eqtldf, SNP %in% snps) %>%
-    pull(ENSEMBL) %>% unique()
-}
-
-
 #' ldpruner
 #'
 #' This function prunes an input LD matrix
@@ -354,7 +168,6 @@ ldpruner = function(ldmatrix, snps) {
   }
   return(to_keep)
 }
-
 
 
 #' oneinst_process
@@ -515,3 +328,217 @@ matrices_proc = function(genematrix, ldmatrix, snps) {
 
   return(list(matrix_pruned, ldmatrix_pruned))
 }
+
+
+
+
+
+
+
+
+
+#' jmaprocessor
+#'
+#' This function takes .jma file as input, and removes variants in LD (LD_r > 0.1)
+#' @param gene gene we want to load the .jma file from
+#' @param chrpath The path to the chromosome foldr containing target genes
+#' @param pthresh The threshold to consider significant instruments
+#' @return The pruned jma file for the input gene
+#' 
+# jmaprocessor = function(gene, chrpath,
+#                         pthresh =  0.05 / 16000,
+#                         refpanel = NULL) {
+#   if (is.null(refpanel)) {
+#     if (file.exists(paste0(chrpath, gene, "/", gene, ".matrix"))) {
+#       onegenematrix = fread(paste0(chrpath, gene, "/",gene, ".matrix"))
+#       res = gather(onegenematrix, key = GENE, value = b, 
+#                    -c(SNP, BETA_GWAS)) %>%
+#         dplyr::select(SNP, b, GENE) %>%
+#         dplyr::filter(GENE == .env[["gene"]])
+#     } else {
+#       stop(".matrix expected but not found")
+#     }
+#   } else {
+#     if (refpanel == "AMPPD") {
+#       if (file.exists(paste0(chrpath, gene, "/", gene, ".txt.jma.cojo"))) {
+#         jmagene = fread(paste0(chrpath,
+#                                gene, "/",
+#                                gene,
+#                                ".txt.jma.cojo"))
+#         ldgene = fread(paste0(chrpath,
+#                               gene, "/",
+#                               gene,
+#                               ".txt.ldr.cojo"), header = T, sep = "\t")
+#         ldgene = ldgene[,1:(ncol(ldgene) - 1)]
+#         # Try with getting the abs LD scores
+#         ldgene[,2:ncol(ldgene)] = abs(ldgene[,2:ncol(ldgene)])
+#       } else {
+#         stop("1000G as ref panel, but jma not found")
+#       }
+#     } else if (refpanel == "1000G") {
+#       if (file.exists(paste0(chrpath, gene, "/", gene, "_1000G.txt.jma.cojo"))) {
+#         jmagene = fread(paste0(chrpath,
+#                                gene, "/",
+#                                gene,
+#                                "_1000G.txt.jma.cojo"))
+#         ldgene = fread(paste0(chrpath,
+#                               gene, "/",
+#                               gene,
+#                               "_1000G.txt.jma.cojo"), header = T, sep = "\t")
+#       } else {
+#         stop("AMMPD as ref panel, but jma not found")
+#       }
+#     }
+#     
+#     # Use ldpruner to process ldgene and get SNP in LE (r2<0.1) only
+#     snps = jmagene %>% arrange(p) %>% pull(SNP)
+#     getsnps = ldpruner(ldmatrix = ldgene, snps = snps)
+#     jmagene = subset(jmagene, SNP %in% getsnps)
+#     jmagene = subset(jmagene, p < pthresh) # This should no longer be necessary after adding the extract step when running COJO
+#     jmagene$GENE = gene
+#   
+#     res = jmagene %>%
+#       dplyr::select(SNP, b, GENE)
+#   }
+#   return(res)
+# }
+
+# jmaprocessor = function(gene, chrpath,
+#                         pthresh =  0.05 / 16000,
+#                         refpanel = NULL, focalgene = FALSE) {
+#   if (is.null(refpanel)) {
+#     if (file.exists(paste0(chrpath, gene, "/", gene, ".matrix"))) {
+#       onegenematrix = fread(paste0(chrpath, gene, "/",gene, ".matrix"))
+#       res = gather(onegenematrix, key = GENE, value = b, 
+#                    -c(SNP, BETA_GWAS)) %>%
+#         dplyr::select(SNP, b, GENE) %>%
+#         dplyr::filter(GENE == .env[["gene"]])
+#       
+#     } else {
+#       stop(".matrix expected but not found")
+#     }
+#   } else {
+#     if (refpanel == "AMPPD") {
+#       if (file.exists(paste0(chrpath, gene, "/", gene, ".txt.jma.cojo"))) {
+#         jmagene = fread(paste0(chrpath,
+#                                gene, "/",
+#                                gene,
+#                                ".txt.jma.cojo"))
+#       } else {
+#         #stop("1000G as ref panel, but jma not found")
+#         jmagene = NULL
+#       }
+#     } else if (refpanel == "1000G") {
+#       if (file.exists(paste0(chrpath, gene, "/", gene, "_1000G.txt.jma.cojo"))) {
+#         jmagene = fread(paste0(chrpath,
+#                                gene, "/",
+#                                gene,
+#                                "_1000G.txt.jma.cojo"))
+#       } else {
+#         #stop("AMMPD as ref panel, but jma not found")
+#         jmagene = NULL
+#       }
+#     }
+#     
+#     if (!is.null(jmagene)) {
+#       jmagene = subset(jmagene, p < pthresh)
+#       jmagene$GENE = gene
+#       
+#       res = jmagene %>%
+#         dplyr::select(SNP, b, GENE)
+#     } else {
+#       res = NULL
+#     }
+#   }
+#   return(res)
+# }
+
+
+#' jmaprocessor
+#'
+#' This function takes the jma matrix and processses it according to the input gene
+#' @param gne The input gene
+#' @param chrpath The path to the input gene working directory
+#' @param pthresh The threshold to consider an instrument independently and 
+#                 significantly asssociated with the epxosure
+#' @param refpanel The reference panel that was used to get the jma matrix
+#' @param focalgene A boolean. is the input gene the focal gene or a candidate
+#'                    extra exposure
+#' @param focalsnps The snp vector of the focal gene
+#' @return a vector of genes
+#'
+
+
+
+# extraexp_jmaprocessor = function(gene, focalsnps, chrpath,
+#                         pthresh =  0.05 / 16000,
+#                         refpanel = NULL) {
+#   if (is.null(refpanel)) {
+#     if (file.exists(paste0(chrpath, gene, "/", gene, ".matrix"))) {
+#       onegenematrix = fread(paste0(chrpath, gene, "/",gene, ".matrix"))
+#       res = gather(onegenematrix, key = GENE, value = b, 
+#                    -c(SNP, BETA_GWAS)) %>%
+#         dplyr::select(SNP, b, GENE) %>%
+#         dplyr::filter(GENE == .env[["gene"]])
+#       
+#     } else {
+#       stop(".matrix expected but not found")
+#     }
+#   } else {
+#     if (refpanel == "AMPPD") {
+#       if (file.exists(paste0(chrpath, gene, "/", gene, ".txt.jma.cojo"))) {
+#         jmagene = fread(paste0(chrpath,
+#                                gene, "/",
+#                                gene,
+#                                ".txt.jma.cojo"))
+#       } else {
+#         #stop("AMPPD as ref panel, but jma not found")
+#         jmagene = NULL
+#       }
+#     } else if (refpanel == "1000G") {
+#       if (file.exists(paste0(chrpath, gene, "/", gene, "_1000G.txt.jma.cojo"))) {
+#         jmagene = fread(paste0(chrpath,
+#                                gene, "/",
+#                                gene,
+#                                "_1000G.txt.jma.cojo"))
+#       } else {
+#         #stop("1000G as ref panel, but jma not found")
+#         jmagene = NULL
+#       }
+#     }
+#     
+#     if (!is.null(jmagene)) {
+#       jmagene = subset(jmagene, p < pthresh)
+#       jmagene$GENE = gene
+#       res = jmagene %>%
+#         dplyr::select(SNP, b, GENE)
+#     } else {
+#       res = NULL
+#     }
+#   }
+#   res_tmp = subset(res, SNP %in% focalsnps) # Checking the extra exposure share instruments with the focal gene
+#   if (nrow(res_tmp) == 0) { # Extra instrument does not share independent signifcantly associated SNPs
+#     res = NULL
+#   }
+#   return(res)
+# }
+
+
+
+#' exp_expander
+#'
+#' It takes the independent snps associated with a gene expression and it finds other regulated genes
+#' @param snps the independent snps for a certain gene
+#' @param eqtldf the filtered eqtl data frame
+#' @return a vector of genes
+#' 
+exp_expander = function(snps, eqtldf) {
+  exp = subset(eqtldf, SNP %in% snps) %>%
+    pull(ENSEMBL) %>% unique()
+}
+
+
+
+
+
+
