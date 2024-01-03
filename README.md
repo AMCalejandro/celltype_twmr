@@ -68,7 +68,7 @@ In addition, we have creates an SBATCH script to further automate the process in
 To run:
 
 ```bash
-sbatch utils/slurm_prepare_twmr.sh
+nohup bash utils/slurm_prepare_twmr.sh
 ```
 
 Finally, we are ready to take the outputs the output of this job to then perform [Cell type enrichment](https://github.com/AMCalejandro/celltype_twmr/blob/master/workflow/6.enrichment_analysis.Rmd) and [Compare gene sets](https://github.com/AMCalejandro/celltype_twmr/blob/master/workflow/7.compare_geneSets.Rmd).  
